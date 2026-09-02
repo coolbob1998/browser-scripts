@@ -257,6 +257,7 @@ def main():
 
     counter = Counter()
     untagged = []
+    tag_movies = {tag: [] for tag in TAG_ORDER}
 
     for movie in movies:
         title = movie.get("title", "")
@@ -267,11 +268,37 @@ def main():
         movie["tagVersion"] = TAG_VERSION
 
         counter.update(tags)
+
         if not tags:
-            untagged.append(movie.get("id"))
+            untagged.append({
+                "id": movie.get("id"),
+                "title": title,
+                "score": movie.get("score"),
+                "releaseDate": movie.get("releaseDate"),
+            })
+
+        # 给 summary 的每个 tag 保存相关作品
+        for tag in tags:
+            tag_movies[tag].append({
+                "id": movie.get("id"),
+                "title": title,
+                "score": movie.get("score"),
+                "scoreNumber": movie.get("scoreNumber"),
+                "releaseDate": movie.get("releaseDate"),
+                "matchedTerms": matches.get(tag, []),
+            })
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(movies, f, ensure_ascii=False, indent=2)
+
+    # 只输出真正命中过的标签；按命中数量降序排列。
+    # 每个标签下同时提供 count 和 movies。
+    tag_details = {}
+    for tag, count in counter.most_common():
+        tag_details[tag] = {
+            "count": count,
+            "movies": tag_movies[tag],
+        }
 
     summary = {
         "tagVersion": TAG_VERSION,
@@ -279,10 +306,20 @@ def main():
         "taggedMovieCount": len(movies) - len(untagged),
         "untaggedMovieCount": len(untagged),
         "tagCount": len(TAG_RULES),
+
+        # 保留原来的简洁频次索引
         "tagFrequency": dict(counter.most_common()),
-        "untaggedIds": untagged,
+
+        # 新增：每个标签下面直接给出相关作品
+        "tags": tag_details,
+
+        # 无标签作品也保留标题，方便后续补规则
+        "untaggedMovies": untagged,
+
         "notes": [
             "标签只来自标题，不代表正片一定包含或主要包含该元素。",
+            "summary.tags.<标签>.movies 列出所有命中该标签的作品。",
+            "matchedTerms 表示标题中实际触发该标签的词，便于检查误判。",
             "黑丝命中时通常也会命中丝袜，这是有意保留的层级标签。",
             "帅气男性_标题只在标题明确出现イケメン时标记，不等于个人审美评分。",
         ],
