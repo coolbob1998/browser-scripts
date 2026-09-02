@@ -354,26 +354,29 @@ def main():
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(movies, f, ensure_ascii=False, indent=2)
 
-    # 细标签详情
-    tag_details = {}
-    for tag, count in tag_counter.most_common():
-        tag_details[tag] = {
-            "count": count,
-            "category": next(
-                (category for category, tags in CATEGORY_MAP.items() if tag in tags),
-                None
-            ),
-            "movies": tag_movies[tag],
-        }
-
-    # 8 大类详情
+    # 8 大类详情：
+    # 大类 -> 子标签 -> 作品
     category_details = {}
     for category in CATEGORY_ORDER:
-        count = category_counter.get(category, 0)
+        subtag_details = {}
+
+        # 保持该大类中细标签的统一顺序，只输出实际命中过的标签
+        for tag in TAG_ORDER:
+            if tag not in CATEGORY_MAP[category]:
+                continue
+
+            count = tag_counter.get(tag, 0)
+            if count == 0:
+                continue
+
+            subtag_details[tag] = {
+                "count": count,
+                "movies": tag_movies[tag],
+            }
+
         category_details[category] = {
-            "count": count,
-            "subtags": sorted(CATEGORY_MAP[category]),
-            "movies": category_movies[category],
+            "count": category_counter.get(category, 0),
+            "subtags": subtag_details,
         }
 
     summary = {
@@ -391,23 +394,23 @@ def main():
             for category in CATEGORY_ORDER
         },
 
-        # 细标签统计
+        # 细标签统计仍保留一个扁平索引，便于快速统计；
+        # 具体作品统一放到 categories -> subtags 下。
         "tagFrequency": dict(tag_counter.most_common()),
 
-        # 双层详情
+        # 层级详情：大类 -> 子标签 -> 作品
         "categories": category_details,
-        "tags": tag_details,
 
         # 无标签作品
         "untaggedMovies": untagged,
 
         "notes": [
-            "categories 是 8 个大类，用于浏览和聚合；tags 是细标签，用于精确筛选。",
-            "一部作品可以同时属于多个大类。",
+            "summary.categories.<大类>.subtags.<细标签>.movies 是主要浏览结构。",
+            "categories 是 8 个大类；subtags 是细标签。",
+            "一部作品可以同时属于多个大类和多个细标签。",
             "标签只来自标题，不代表正片一定包含或主要包含该元素。",
-            "summary.categories.<大类>.movies 列出属于该大类的作品。",
-            "summary.tags.<细标签>.movies 列出命中该细标签的作品。",
             "matchedTerms 表示标题中实际触发标签的词，便于检查误判。",
+            "tagFrequency 只作为扁平统计索引，不再重复保存作品列表。",
             "黑丝命中时通常也会命中丝袜，这是有意保留的层级标签。",
             "帅气男性_标题未放入 8 大类，因为它更适合作为男优个人属性单独管理。",
         ],
@@ -423,7 +426,7 @@ def main():
     print(f"输出: {output_path}")
     print(f"统计: {summary_path}")
     print("\nTop 20 标签:")
-    for tag, n in counter.most_common(20):
+    for tag, n in tag_counter.most_common(20):
         print(f"{tag:12s} {n}")
 
 if __name__ == "__main__":
