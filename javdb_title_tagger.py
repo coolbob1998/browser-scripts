@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-JAVDB 导出 JSON：按标题自动提取标准化标签。
+JAVDB 导出 JSON：按标题自动提取细标签，并聚合为 8 个大类。
 
 用法：
     python javdb_title_tagger.py input.json
@@ -14,8 +14,9 @@ JAVDB 导出 JSON：按标题自动提取标准化标签。
 
 输出新增：
     "tags": ["眼镜", "地味", ...]
+    "categories": ["外观穿着", "人设身份", ...]
     "tagMatches": {"眼镜": ["メガネ"], "地味": ["地味"]}
-    "tagVersion": "title-v1"
+    "tagVersion": "title-v2-8cats"
 
 说明：
 - 只根据标题判断，所以“准确率优先、召回率其次”。
@@ -29,7 +30,7 @@ import re
 from collections import Counter
 from pathlib import Path
 
-TAG_VERSION = "title-v1"
+TAG_VERSION = "title-v2-8cats"
 
 # 49 个标准化标签。顺序也用于输出排序。
 TAG_RULES = {
@@ -209,7 +210,48 @@ TAG_RULES = {
     ],
 }
 
+
 TAG_ORDER = list(TAG_RULES.keys())
+
+# 8 个大类：细标签负责检索精度，大类负责日常浏览。
+CATEGORY_MAP = {
+    "外观穿着": {
+        "眼镜", "黑丝", "丝袜", "黑发", "清楚", "辣妹", "巨乳", "美尻/大臀", "美腿", "泳装",
+    },
+    "人设身份": {
+        "地味", "OL/职场女性", "女上司", "女教师", "家庭教师", "学生/制服",
+        "女仆", "护士", "空乘", "宅系",
+    },
+    "关系剧情": {
+        "人妻", "幼驯染", "同居/同棲", "相部屋", "邻居", "亲属情境",
+        "恋爱/甜蜜", "NTR", "不伦/出轨",
+    },
+    "支配调教": {
+        "调教", "服从/奴隶", "开发", "束缚", "蒙眼", "监禁", "射精管理", "寸止",
+    },
+    "强情节": {
+        "强制情境", "媚药/药物情境", "露出/羞耻",
+    },
+    "性行为": {
+        "中出", "口交", "亲吻", "肛门", "乳头", "放尿/漏尿",
+    },
+    "女性主导/女同": {
+        "痴女", "女同",
+    },
+    "拍摄形式": {
+        "主观", "ASMR", "自拍/跟拍",
+    },
+}
+
+CATEGORY_ORDER = list(CATEGORY_MAP.keys())
+
+def categories_from_tags(tags):
+    tag_set = set(tags)
+    return [
+        category
+        for category in CATEGORY_ORDER
+        if tag_set.intersection(CATEGORY_MAP[category])
+    ]
 
 def compile_rules():
     compiled = {}
@@ -255,49 +297,83 @@ def main():
     if not isinstance(movies, list):
         raise ValueError("输入 JSON 顶层必须是数组。")
 
-    counter = Counter()
+    tag_counter = Counter()
+    category_counter = Counter()
     untagged = []
+
     tag_movies = {tag: [] for tag in TAG_ORDER}
+    category_movies = {category: [] for category in CATEGORY_ORDER}
 
     for movie in movies:
         title = movie.get("title", "")
         tags, matches = tag_title(title)
+        categories = categories_from_tags(tags)
 
+        # 双层结构：
+        # tags = 细标签，用于精确筛选
+        # categories = 8 大类，用于浏览和聚合
         movie["tags"] = tags
+        movie["categories"] = categories
         movie["tagMatches"] = matches
         movie["tagVersion"] = TAG_VERSION
 
-        counter.update(tags)
+        tag_counter.update(tags)
+        category_counter.update(categories)
+
+        movie_summary_base = {
+            "id": movie.get("id"),
+            "title": title,
+            "score": movie.get("score"),
+            "scoreNumber": movie.get("scoreNumber"),
+            "releaseDate": movie.get("releaseDate"),
+        }
 
         if not tags:
-            untagged.append({
-                "id": movie.get("id"),
-                "title": title,
-                "score": movie.get("score"),
-                "releaseDate": movie.get("releaseDate"),
-            })
+            untagged.append(movie_summary_base.copy())
 
-        # 给 summary 的每个 tag 保存相关作品
+        # 细标签 -> 作品
         for tag in tags:
-            tag_movies[tag].append({
-                "id": movie.get("id"),
-                "title": title,
-                "score": movie.get("score"),
-                "scoreNumber": movie.get("scoreNumber"),
-                "releaseDate": movie.get("releaseDate"),
-                "matchedTerms": matches.get(tag, []),
-            })
+            item = movie_summary_base.copy()
+            item["matchedTerms"] = matches.get(tag, [])
+            item["categories"] = categories
+            tag_movies[tag].append(item)
+
+        # 大类 -> 作品
+        for category in categories:
+            item = movie_summary_base.copy()
+            item["tags"] = [
+                tag for tag in tags
+                if tag in CATEGORY_MAP[category]
+            ]
+            item["matchedTerms"] = {
+                tag: matches.get(tag, [])
+                for tag in item["tags"]
+            }
+            category_movies[category].append(item)
 
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(movies, f, ensure_ascii=False, indent=2)
 
-    # 只输出真正命中过的标签；按命中数量降序排列。
-    # 每个标签下同时提供 count 和 movies。
+    # 细标签详情
     tag_details = {}
-    for tag, count in counter.most_common():
+    for tag, count in tag_counter.most_common():
         tag_details[tag] = {
             "count": count,
+            "category": next(
+                (category for category, tags in CATEGORY_MAP.items() if tag in tags),
+                None
+            ),
             "movies": tag_movies[tag],
+        }
+
+    # 8 大类详情
+    category_details = {}
+    for category in CATEGORY_ORDER:
+        count = category_counter.get(category, 0)
+        category_details[category] = {
+            "count": count,
+            "subtags": sorted(CATEGORY_MAP[category]),
+            "movies": category_movies[category],
         }
 
     summary = {
@@ -305,23 +381,35 @@ def main():
         "movieCount": len(movies),
         "taggedMovieCount": len(movies) - len(untagged),
         "untaggedMovieCount": len(untagged),
+
+        "categoryCount": len(CATEGORY_MAP),
         "tagCount": len(TAG_RULES),
 
-        # 保留原来的简洁频次索引
-        "tagFrequency": dict(counter.most_common()),
+        # 大类统计
+        "categoryFrequency": {
+            category: category_counter.get(category, 0)
+            for category in CATEGORY_ORDER
+        },
 
-        # 新增：每个标签下面直接给出相关作品
+        # 细标签统计
+        "tagFrequency": dict(tag_counter.most_common()),
+
+        # 双层详情
+        "categories": category_details,
         "tags": tag_details,
 
-        # 无标签作品也保留标题，方便后续补规则
+        # 无标签作品
         "untaggedMovies": untagged,
 
         "notes": [
+            "categories 是 8 个大类，用于浏览和聚合；tags 是细标签，用于精确筛选。",
+            "一部作品可以同时属于多个大类。",
             "标签只来自标题，不代表正片一定包含或主要包含该元素。",
-            "summary.tags.<标签>.movies 列出所有命中该标签的作品。",
-            "matchedTerms 表示标题中实际触发该标签的词，便于检查误判。",
+            "summary.categories.<大类>.movies 列出属于该大类的作品。",
+            "summary.tags.<细标签>.movies 列出命中该细标签的作品。",
+            "matchedTerms 表示标题中实际触发标签的词，便于检查误判。",
             "黑丝命中时通常也会命中丝袜，这是有意保留的层级标签。",
-            "帅气男性_标题只在标题明确出现イケメン时标记，不等于个人审美评分。",
+            "帅气男性_标题未放入 8 大类，因为它更适合作为男优个人属性单独管理。",
         ],
     }
 

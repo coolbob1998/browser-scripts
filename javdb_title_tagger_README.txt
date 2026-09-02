@@ -1,18 +1,54 @@
-JAVDB 标题自动标签工具
+JAVDB 标题自动标签工具 v3
 
-使用方法：
-1. 把 javdb_title_tagger.py 和你的导出 JSON 放到同一个文件夹。
-2. 命令行执行：
-   python javdb_title_tagger.py 你的文件.json
+核心变化：
+- 保留细标签 tags
+- 新增 8 大类 categories
+- summary 同时按大类和细标签列出作品
 
-指定输出名：
-   python javdb_title_tagger.py 你的文件.json -o javdb_tagged.json
+8 大类：
+1. 外观穿着
+2. 人设身份
+3. 关系剧情
+4. 支配调教
+5. 强情节
+6. 性行为
+7. 女性主导/女同
+8. 拍摄形式
 
-脚本会生成：
-- *_tagged.json：原数据 + tags + tagMatches + tagVersion
-- *_summary.json：标签频次、未命中作品 ID 等统计
+输出单条作品示例：
+{
+  "id": "APAK-251",
+  "tags": ["眼镜", "地味", "OL/职场女性"],
+  "categories": ["外观穿着", "人设身份"],
+  "tagMatches": {
+    "眼镜": ["メガネ"],
+    "地味": ["地味"],
+    "OL/职场女性": ["OL"]
+  }
+}
 
-当前标准标签数量：49
-核心标签包括：眼镜、黑丝、丝袜、地味、调教、主观、ASMR、OL/职场女性、
-女上司、女教师、人妻、女同、NTR、服从/奴隶、束缚、蒙眼、监禁、
-媚药/药物情境、射精管理、寸止、中出等。
+summary 主要结构：
+{
+  "categoryFrequency": {...},
+  "tagFrequency": {...},
+  "categories": {
+    "外观穿着": {
+      "count": 123,
+      "subtags": [...],
+      "movies": [...]
+    }
+  },
+  "tags": {
+    "眼镜": {
+      "count": 12,
+      "category": "外观穿着",
+      "movies": [...]
+    }
+  }
+}
+
+使用：
+python javdb_title_tagger.py input.json
+
+指定输出：
+python javdb_title_tagger.py input.json -o output_tagged.json
